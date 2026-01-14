@@ -655,6 +655,44 @@ app.get('/api/recordings/:id', async (req, res) => {
   }
 });
 
+// Proxy: GET /api/recordings/by-call-id/:yearMonthCallId
+// Fetches recordings by call_id from the upstream API
+app.get('/api/recordings/by-call-id/:yearMonthCallId', async (req, res) => {
+  const { yearMonthCallId } = req.params;
+  const account = req.query.account || 'default';
+
+  try {
+    // Obtain (cached) JWT for this tenant
+    const token = await getPortalToken(account);
+
+    const upstreamUrl = `${process.env.BASE_URL}/api/v2/reports/recordings/by_call_id/${yearMonthCallId}`;
+    
+    console.log(`📞 Fetching recordings by call_id: ${yearMonthCallId}`);
+    console.log(`🔗 Upstream URL: ${upstreamUrl}`);
+
+    const upstreamRes = await axios.get(upstreamUrl, {
+      httpsAgent,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'X-User-Agent': 'portal',
+        'X-Account-ID': process.env.ACCOUNT_ID_HEADER ?? account,
+        'Accept': 'application/json'
+      },
+      timeout: 10000
+    });
+
+    console.log(`✅ Recordings fetched successfully for call_id: ${yearMonthCallId}`);
+    res.json(upstreamRes.data);
+  } catch (err) {
+    const status = err.response?.status || 500;
+    console.error(`❌ Error fetching recordings by call_id ${yearMonthCallId}:`, err.response?.data || err.message);
+    res.status(status).json({ 
+      error: err.message,
+      details: err.response?.data 
+    });
+  }
+});
+
 // SSL Certificate Management
 const loadSSLCertificates = () => {
   try {

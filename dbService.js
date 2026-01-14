@@ -8,27 +8,10 @@ dotenv.config();
 
 // Create a connection pool
 
-// const pool = mysql.createPool({
-//   host: 'localhost',
-//   user: 'root',
-//   password: 'Ayan@1012',
-//   database: 'spc_main_cdr',
-//   port: 3306,
-//   waitForConnections: true,
-//   connectionLimit: 50,  // Increased for better multi-tab performance
-//   queueLimit: 25,       // Added queue limit to prevent overwhelming the server
-//   multipleStatements: true,
-//   connectTimeout: 60000,  // 60 seconds connection timeout
-//   acquireTimeout: 60000,  // 60 seconds acquire timeout
-//   timeout: 180000,       // 180 seconds query timeout
-//   enableKeepAlive: true, // Enable connection keep-alive
-//   keepAliveInitialDelay: 10000 // Keep-alive ping every 10 seconds
-// });
-
 const pool = mysql.createPool({
-  host:"0.0.0.0",
-  user: 'multycomm',
-  password: 'WELcome@123',
+  host: 'localhost',
+  user: 'root',
+  password: 'Ayan@1012',
   database: 'spc_main_cdr',
   port: 3306,
   waitForConnections: true,
@@ -41,6 +24,23 @@ const pool = mysql.createPool({
   enableKeepAlive: true, // Enable connection keep-alive
   keepAliveInitialDelay: 10000 // Keep-alive ping every 10 seconds
 });
+
+// const pool = mysql.createPool({
+//   host:"0.0.0.0",
+//   user: 'multycomm',
+//   password: 'WELcome@123',
+//   database: 'spc_main_cdr',
+//   port: 3306,
+//   waitForConnections: true,
+//   connectionLimit: 50,  // Increased for better multi-tab performance
+//   queueLimit: 25,       // Added queue limit to prevent overwhelming the server
+//   multipleStatements: true,
+//   connectTimeout: 60000,  // 60 seconds connection timeout
+//   acquireTimeout: 60000,  // 60 seconds acquire timeout
+//   timeout: 180000,       // 180 seconds query timeout
+//   enableKeepAlive: true, // Enable connection keep-alive
+//   keepAliveInitialDelay: 10000 // Keep-alive ping every 10 seconds
+// });
 
 
 /**

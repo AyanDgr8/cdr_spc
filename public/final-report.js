@@ -430,7 +430,7 @@ function createTableRows(data) {
       row.transfer_type || '',
       processHistoryData(row.agent_history, 'agent'),
       processHistoryData(row.queue_history, 'queue'),
-      row.recording ? createRecordingLink(row.recording) : '',
+      row.recording ? createRecordingLink(row.recording, row.call_id, row.called_time) : '',
       row.call_id || '',
       row.system_disposition || row.disposition || '',
     ];
@@ -460,13 +460,17 @@ function createTableRows(data) {
 }
 
 // Create recording link/button
-function createRecordingLink(recordingUrl) {
+function createRecordingLink(recordingUrl, callId, calledTime) {
   if (!recordingUrl) return '';
   
   const button = document.createElement('button');
   button.className = 'button is-small is-info is-rounded play-btn';
   button.innerHTML = '<span class="icon is-small"><i class="material-icons">play_arrow</i></span>';
   button.title = 'Play recording';
+  
+  // Store call_id and called_date for fetching recordings by call_id
+  button.dataset.callId = callId || '';
+  button.dataset.calledTime = calledTime || '';
   
   // Ensure the URL is properly formatted
   let cleanUrl = recordingUrl;
@@ -481,8 +485,186 @@ function createRecordingLink(recordingUrl) {
   return button;
 }
 
+// Fetch recordings by call_id
+async function fetchRecordingsByCallId(callId, calledTime) {
+  try {
+    console.log('fetchRecordingsByCallId called with:', { callId, calledTime, type: typeof calledTime });
+    
+    // Extract year-month from called_time (format: YYYYMM)
+    let yearMonth = '';
+    
+    if (!calledTime) {
+      throw new Error('called_time is required but was not provided');
+    }
+    
+    // Handle different date formats
+    // First, check if it's a numeric string (timestamp as string)
+    if (typeof calledTime === 'string' && /^\d+$/.test(calledTime)) {
+      console.log('Converting numeric string to number:', calledTime);
+      calledTime = parseInt(calledTime, 10);
+    }
+    
+    if (typeof calledTime === 'number') {
+      // Unix timestamp (seconds or milliseconds)
+      console.log('Processing numeric timestamp:', calledTime);
+      const timestampMs = calledTime > 10000000000 ? calledTime : calledTime * 1000;
+      const dateObj = new Date(timestampMs);
+      
+      if (isNaN(dateObj.getTime())) {
+        throw new Error(`Invalid timestamp: ${calledTime}`);
+      }
+      
+      const year = dateObj.getFullYear();
+      const month = (dateObj.getMonth() + 1).toString().padStart(2, '0');
+      yearMonth = `${year}${month}`;
+      console.log('Extracted yearMonth from timestamp:', yearMonth, 'Date:', dateObj.toISOString());
+      
+    } else if (typeof calledTime === 'string') {
+      console.log('Processing string date:', calledTime);
+      
+      // String format (DD/MM/YYYY, HH:MM:SS or YYYY-MM-DD HH:MM:SS)
+      if (calledTime.includes('/')) {
+        // DD/MM/YYYY format
+        const parts = calledTime.split(',')[0].split('/');
+        if (parts.length >= 3) {
+          yearMonth = parts[2] + parts[1]; // YYYYMM
+          console.log('Extracted yearMonth from DD/MM/YYYY:', yearMonth);
+        }
+      } else if (calledTime.includes('-')) {
+        // YYYY-MM-DD format
+        const parts = calledTime.split(' ')[0].split('-');
+        if (parts.length >= 3) {
+          yearMonth = parts[0] + parts[1]; // YYYYMM
+          console.log('Extracted yearMonth from YYYY-MM-DD:', yearMonth);
+        }
+      }
+      
+      // If string parsing failed, try to parse as date
+      if (!yearMonth) {
+        const dateObj = new Date(calledTime);
+        if (!isNaN(dateObj.getTime())) {
+          const year = dateObj.getFullYear();
+          const month = (dateObj.getMonth() + 1).toString().padStart(2, '0');
+          yearMonth = `${year}${month}`;
+          console.log('Extracted yearMonth from parsed string:', yearMonth);
+        }
+      }
+    }
+    
+    if (!yearMonth) {
+      throw new Error(`Could not determine year-month from called_time: ${calledTime} (type: ${typeof calledTime})`);
+    }
+    
+    // Use backend proxy endpoint to avoid CORS issues
+    const apiUrl = `/api/recordings/by-call-id/${yearMonth}-${callId}?account=default`;
+    
+    console.log('Fetching recordings from backend proxy:', apiUrl);
+    
+    // Make the API request through the backend proxy
+    const response = await fetch(apiUrl, {
+      method: 'GET',
+      headers: {
+        'Accept': 'application/json'
+      }
+    });
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('API error response:', errorText);
+      throw new Error(`API request failed: ${response.status} ${response.statusText}`);
+    }
+    
+    const data = await response.json();
+    console.log('Recordings response:', data);
+    console.log('Number of recordings:', data.recordings ? data.recordings.length : 0);
+    console.log('Recordings array:', data.recordings);
+    
+    return data;
+  } catch (error) {
+    console.error('Error fetching recordings by call_id:', error);
+    throw error;
+  }
+}
+
+// Display multiple recordings in a modal
+function showRecordingsModal(recordings) {
+  if (!recordings || recordings.length === 0) {
+    alert('No recordings found for this call');
+    return;
+  }
+  
+  // Create modal
+  const modal = document.createElement('div');
+  modal.className = 'modal is-active recordings-list-modal';
+  
+  // Build recordings list HTML
+  let recordingsHtml = '';
+  recordings.forEach((recording, index) => {
+    recordingsHtml += `
+      <div class="box" style="margin-bottom: 1rem;">
+        <div style="display: flex; align-items: center; justify-content: space-between;">
+          <div>
+            <strong>Recording ${index + 1}</strong>
+            <br>
+            <small style="font-family: monospace; color: #666;">${recording.id}</small>
+          </div>
+          <button class="button is-info is-rounded play-recording-btn" 
+                  data-recording-id="${recording.id}" 
+                  data-recording-name="${recording.id}">
+            <span class="icon"><i class="material-icons">play_arrow</i></span>
+            <span>Play</span>
+          </button>
+        </div>
+      </div>
+    `;
+  });
+  
+  modal.innerHTML = `
+    <div class="modal-background"></div>
+    <div class="modal-card">
+      <header class="modal-card-head">
+        <p class="modal-card-title">Recordings (${recordings.length})</p>
+        <button class="delete" aria-label="close"></button>
+      </header>
+      <section class="modal-card-body">
+        ${recordingsHtml}
+      </section>
+    </div>
+  `;
+  
+  document.body.appendChild(modal);
+  
+  // Close modal handlers
+  const closeModal = () => {
+    document.body.removeChild(modal);
+  };
+  
+  modal.querySelector('.modal-background').onclick = closeModal;
+  modal.querySelector('.delete').onclick = closeModal;
+  document.addEventListener('keydown', function escHandler(e) {
+    if (e.key === 'Escape') {
+      closeModal();
+      document.removeEventListener('keydown', escHandler);
+    }
+  });
+  
+  // Add click handlers for play buttons
+  modal.querySelectorAll('.play-recording-btn').forEach(btn => {
+    btn.addEventListener('click', function() {
+      const recordingId = this.dataset.recordingId;
+      const recordingName = this.dataset.recordingName;
+      
+      // Use backend proxy endpoint to avoid CORS issues
+      const recordingUrl = `/api/recordings/${recordingId}?account=default`;
+      
+      console.log('Playing recording:', recordingUrl);
+      playRecording(recordingUrl, recordingName);
+    });
+  });
+}
+
 // Play recording in a modal with waveform 
-function playRecording(url) {
+function playRecording(url, fileName) {
   console.log('Playing recording:', url);
 
   if (!url) {
@@ -491,7 +673,10 @@ function playRecording(url) {
     return;
   }
 
-  const fileName = url.split('/').pop().split('?')[0];
+  // Use provided fileName or extract from URL
+  if (!fileName) {
+    fileName = url.split('/').pop().split('?')[0];
+  }
 
   // Create modal
   const modal = document.createElement('div');
@@ -625,7 +810,6 @@ function playRecording(url) {
     return `${m}:${s}`;
   }
 }
-
 
 
 // Fetch data from API
@@ -988,7 +1172,7 @@ function appendTableRows(tbody, rows, startIndex = 0) {
       { value: row.transfer_type || '', isHTML: false },  // Transfer type column
       { value: processHistoryData(row.agent_history, 'agent'), isHTML: true },  // HTML content with eye button
       { value: processHistoryData(row.record_type === 'Campaign' ? (row.lead_history || row.queue_history) : row.queue_history, 'queue'), isHTML: true },   // HTML content with eye button - use lead_history for campaigns
-      { value: row.recording ? createRecordingLink(row.recording) : '', isHTML: false, isElement: true },  // Recording button element
+      { value: row.recording ? createRecordingLink(row.recording, row.call_id, row.called_time) : '', isHTML: false, isElement: true },  // Recording button element
       { value: row.call_id || '', isHTML: false },
       { value: row.system_disposition || row.disposition || '', isHTML: false },  // System Disposition column
     ];
@@ -1667,10 +1851,46 @@ function initializeEyeButtons(container) {
   playButtons.forEach(btn => {
     if (!btn.hasAttribute('data-initialized')) {
       btn.setAttribute('data-initialized', 'true');
-      btn.addEventListener('click', function(e) {
+      btn.addEventListener('click', async function(e) {
         e.preventDefault();
-        console.log('Play button clicked, src:', this.dataset.src);
-        playRecording(this.dataset.src);
+        
+        const callId = this.dataset.callId;
+        const calledTime = this.dataset.calledTime;
+        
+        console.log('Play button clicked, call_id:', callId, 'called_time:', calledTime);
+        
+        // If we have call_id and called_time, fetch recordings by call_id
+        if (callId && calledTime) {
+          try {
+            // Show loading indicator
+            this.disabled = true;
+            this.innerHTML = '<span class="icon is-small"><i class="material-icons">hourglass_empty</i></span>';
+            
+            const response = await fetchRecordingsByCallId(callId, calledTime);
+            
+            // Reset button
+            this.disabled = false;
+            this.innerHTML = '<span class="icon is-small"><i class="material-icons">play_arrow</i></span>';
+            
+            if (response && response.recordings && response.recordings.length > 0) {
+              // Show recordings modal with all recordings
+              showRecordingsModal(response.recordings);
+            } else {
+              alert('No recordings found for this call');
+            }
+          } catch (error) {
+            // Reset button
+            this.disabled = false;
+            this.innerHTML = '<span class="icon is-small"><i class="material-icons">play_arrow</i></span>';
+            
+            console.error('Error fetching recordings:', error);
+            alert('Error fetching recordings: ' + error.message);
+          }
+        } else {
+          // Fallback to old behavior if call_id is not available
+          console.log('Using fallback method with src:', this.dataset.src);
+          playRecording(this.dataset.src);
+        }
       });
     }
   });
