@@ -1,0 +1,41 @@
+{
+  "name": "voicemeetme",
+  "version": "1.0.0",
+  "main": "cdrFetcher.js",
+  "type": "module",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "NODE_OPTIONS=--max_old_space_size=4096 concurrently \"npm:server\" \"npm:populate\"",
+    "server": "node server.js",
+    "populate": "node db-populate-service.js 5 1",
+    "access": "node -r dotenv/config accessToken.js",
+    "reports": "node -r dotenv/config reportFetcher.js",
+    "agents": "node -r dotenv/config agentStatus.js",
+    "cdrs": "node -r dotenv/config reportFetcher.js cdrs",
+    "queueCalls": "node -r dotenv/config reportFetcher.js queueCalls",
+    "queueOutbound": "node -r dotenv/config reportFetcher.js queueOutboundCalls",
+    "campaigns": "node -r dotenv/config reportFetcher.js campaignsActivity",
+    "dev": "nodemon server.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "axios": "^1.10.0",
+    "bcrypt": "^6.0.0",
+    "cookie-parser": "^1.4.7",
+    "dotenv": "^17.0.0",
+    "express": "^5.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "libphonenumber-js": "^1.10.44",
+    "luxon": "^3.7.2",
+    "music-metadata": "^11.6.0",
+    "mysql2": "^3.14.2",
+    "node-fetch": "^3.3.2"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "nodemon": "^3.0.1"
+  }
+}
