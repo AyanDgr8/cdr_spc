@@ -547,6 +547,7 @@ app.get('/api/recordings/:id/meta', async (req, res) => {
 
   // Return cached value if present
   if (durationCache.has(id)) {
+    res.setHeader('Cache-Control', 'public, max-age=3600');
     return res.json({ duration: durationCache.get(id) });
   }
 
@@ -644,6 +645,9 @@ app.get('/api/recordings/:id', async (req, res) => {
       res.setHeader('Content-Duration', dur.toFixed(3));
     }
 
+    // FIX 5: Add Cache-Control for browser caching (1 hour)
+    res.setHeader('Cache-Control', 'public, max-age=3600');
+
     // Stream data
     upstreamRes.data.pipe(res);
   } catch (err) {
@@ -655,21 +659,50 @@ app.get('/api/recordings/:id', async (req, res) => {
   }
 });
 
+// Cache for recordings by call_id (1 hour TTL)
+const recordingsByCallIdCache = new Map();
+const RECORDING_CACHE_TTL = 3600000;
+// Track in-flight requests to prevent duplicate fetches
+const pendingRequests = new Map();
+
 // Proxy: GET /api/recordings/by-call-id/:yearMonthCallId
 // Fetches recordings by call_id from the upstream API
 app.get('/api/recordings/by-call-id/:yearMonthCallId', async (req, res) => {
   const { yearMonthCallId } = req.params;
   const account = req.query.account || 'default';
+  const cacheKey = `${account}:${yearMonthCallId}`;
 
-  try {
-    // Obtain (cached) JWT for this tenant
-    const token = await getPortalToken(account);
+  // Return cached if available
+  const cached = recordingsByCallIdCache.get(cacheKey);
+  if (cached && (Date.now() - cached.ts < RECORDING_CACHE_TTL)) {
+    console.log(`⚡ Cache HIT: ${yearMonthCallId}`);
+    return res.json(cached.data);
+  }
 
-    const upstreamUrl = `${process.env.BASE_URL}/api/v2/reports/recordings/by_call_id/${yearMonthCallId}`;
-    
+  // Check if request is already in-flight (deduplication)
+  if (pendingRequests.has(cacheKey)) {
+    console.log(`⏳ Waiting for pending request: ${yearMonthCallId}`);
+    try {
+      const result = await pendingRequests.get(cacheKey);
+      return res.json(result);
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  }
+
+  // Create promise for this request and store for deduplication
+  const fetchPromise = (async () => {
+    const startTime = Date.now();
     console.log(`📞 Fetching recordings by call_id: ${yearMonthCallId}`);
+    
+    const tokenStart = Date.now();
+    const token = await getPortalToken(account);
+    console.log(`⏱️  Token fetch took: ${Date.now() - tokenStart}ms`);
+    
+    const upstreamUrl = `${process.env.BASE_URL}/api/v2/reports/recordings/by_call_id/${yearMonthCallId}`;
     console.log(`🔗 Upstream URL: ${upstreamUrl}`);
 
+    const apiStart = Date.now();
     const upstreamRes = await axios.get(upstreamUrl, {
       httpsAgent,
       headers: {
@@ -678,11 +711,24 @@ app.get('/api/recordings/by-call-id/:yearMonthCallId', async (req, res) => {
         'X-Account-ID': process.env.ACCOUNT_ID_HEADER ?? account,
         'Accept': 'application/json'
       },
-      timeout: 900000
+      timeout: 30000  // Reduced from 900000ms to 30s
     });
+    console.log(`⏱️  Upstream API took: ${Date.now() - apiStart}ms`);
 
-    console.log(`✅ Recordings fetched successfully for call_id: ${yearMonthCallId}`);
-    res.json(upstreamRes.data);
+    console.log(`✅ Recordings fetched successfully for call_id: ${yearMonthCallId} (Total: ${Date.now() - startTime}ms)`);
+    
+    // Cache the result
+    recordingsByCallIdCache.set(cacheKey, { data: upstreamRes.data, ts: Date.now() });
+    
+    return upstreamRes.data;
+  })();
+
+  // Store pending request for deduplication
+  pendingRequests.set(cacheKey, fetchPromise);
+
+  try {
+    const data = await fetchPromise;
+    res.json(data);
   } catch (err) {
     const status = err.response?.status || 500;
     console.error(`❌ Error fetching recordings by call_id ${yearMonthCallId}:`, err.response?.data || err.message);
@@ -690,6 +736,9 @@ app.get('/api/recordings/by-call-id/:yearMonthCallId', async (req, res) => {
       error: err.message,
       details: err.response?.data 
     });
+  } finally {
+    // Clean up pending request
+    pendingRequests.delete(cacheKey);
   }
 });
 

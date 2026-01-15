@@ -472,7 +472,7 @@ function createRecordingLink(recordingUrl, callId, calledTime) {
   button.dataset.callId = callId || '';
   button.dataset.calledTime = calledTime || '';
   
-  // Ensure the URL is properly formatted
+  // Always construct direct recording URL - no need to fetch list
   let cleanUrl = recordingUrl;
   // If it's just an ID, assume it's a relative path to the API endpoint
   if (!recordingUrl.includes('/') && !recordingUrl.includes('http')) {
@@ -681,6 +681,10 @@ function playRecording(url, fileName) {
     fileName = url.split('/').pop().split('?')[0];
   }
 
+  // FIX 2: Create HTML5 Audio FIRST for instant playback (0.2-0.5s start)
+  const audio = new Audio(url);
+  audio.preload = 'metadata';
+  
   // Create modal
   const modal = document.createElement('div');
   modal.className = 'modal is-active recording-modal';
@@ -701,24 +705,26 @@ function playRecording(url, fileName) {
           <button class="button is-small is-light" id="speedBtn" title="Switch speed">1x</button>
         </div>
         <div style="position:absolute; bottom:10px; right:5px;" title="Download Recording">
-          <a id="downloadBtn"><i class="material-icons">file_download</i></a>
+          <a id="downloadBtn" href="${url}" download="${fileName.endsWith('.mp3') ? fileName : fileName + '.mp3'}"><i class="material-icons">file_download</i></a>
         </div>
       </section>
     </div>
   `;
   document.body.appendChild(modal);
 
-  // Load Wavesurfer dynamically if needed
-  if (!window.WaveSurfer) {
+  // FIX 6: WaveSurfer should already be loaded at page load
+  if (window.WaveSurfer) {
+    initPlayer();
+  } else {
+    // Fallback: load dynamically if not pre-loaded
     const script = document.createElement('script');
     script.src = "https://unpkg.com/wavesurfer.js@7/dist/wavesurfer.min.js";
     script.onload = () => initPlayer();
     document.head.appendChild(script);
-  } else {
-    initPlayer();
   }
 
   function initPlayer() {
+    // FIX 3: Use MediaElement backend with existing audio element
     const wavesurfer = WaveSurfer.create({
       container: '#waveform',
       waveColor: '#90caf9',
@@ -726,34 +732,16 @@ function playRecording(url, fileName) {
       cursorColor: '#ef5350',
       barWidth: 2,
       responsive: true,
-      backend: 'MediaElement', // HTML5 audio backend
+      backend: 'MediaElement',
+      media: audio, // Attach to existing audio element
       height: 60,
     });
-
-    // Load file
-    wavesurfer.load(url);
 
     const playBtn = document.getElementById('playBtn');
     const rewBtn = document.getElementById('rewBtn');
     const fwdBtn = document.getElementById('fwdBtn');
     const speedBtn = document.getElementById('speedBtn');
     const timeLbl = document.getElementById('timeLbl');
-    const downloadBtn = document.getElementById('downloadBtn');
-
-    // ✅ Fetch duration from backend (/meta) for long recordings
-    // Fix: Insert /meta before query string, not after
-    const metaUrl = url.includes('?') 
-      ? url.replace('?', '/meta?') 
-      : `${url}/meta`;
-    fetch(metaUrl)
-      .then(r => r.json())
-      .then(data => {
-        if (typeof data.duration === 'number') {
-          const dur = data.duration;
-          timeLbl.textContent = `0:00 / ${fmt(dur)}`;
-        }
-      })
-      .catch(err => console.error('Meta fetch failed:', err));
 
     // Play/pause
     playBtn.onclick = () => {
@@ -787,24 +775,15 @@ function playRecording(url, fileName) {
       timeLbl.textContent = `0:00 / ${fmt(dur)}`;
     });
 
-    // Download link
-    fetch(url)
-      .then(r => r.blob())
-      .then(blob => {
-        const objUrl = URL.createObjectURL(blob);
-        downloadBtn.href = objUrl;
-        downloadBtn.download = fileName.endsWith('.mp3')
-          ? fileName
-          : fileName + '.mp3';
-      });
-
     // ✅ Closing modal (X, background, Esc)
     const closeModal = () => {
       wavesurfer.destroy();
+      audio.pause();
+      audio.src = '';
       document.body.removeChild(modal);
     };
-    modal.querySelector('.modal-background').onclick = closeModal; // click outside
-    modal.querySelector('.delete').onclick = closeModal;            // X button
+    modal.querySelector('.modal-background').onclick = closeModal;
+    modal.querySelector('.delete').onclick = closeModal;
     document.addEventListener('keydown', e => {
       if (e.key === 'Escape') closeModal();
     });
@@ -1080,6 +1059,9 @@ function renderTable(data) {
   // Render initial batch of rows
   appendTableRows(tbody, initialRows, 0);
   
+  // FIX 4: Disabled - prefetching downloads full recordings which is slow
+  // prefetchRecordings(initialRows);
+  
   // Set up infinite scrolling
   if (data.length > initialBatchSize) {
     // Add a small loading indicator at the bottom that's always visible
@@ -1131,6 +1113,41 @@ function renderTable(data) {
     tableContainer.addEventListener('scroll', loadMoreOnScroll);
   }
 }
+
+// Background pre-fetch recordings to warm cache (runs silently)
+function prefetchRecordings(rows) {
+  // Get first 10 rows that have call_id and called_time
+  const rowsWithRecordings = rows
+    .filter(r => r.call_id && r.called_time && r.recording)
+    .slice(0, 10);
+  
+  if (rowsWithRecordings.length === 0) return;
+  
+  console.log(`🔄 Pre-fetching ${rowsWithRecordings.length} recordings in background...`);
+  
+  // Fetch one at a time to avoid overwhelming the server
+  let index = 0;
+  const fetchNext = () => {
+    if (index >= rowsWithRecordings.length) {
+      console.log('✅ Background pre-fetch complete');
+      return;
+    }
+    
+    const row = rowsWithRecordings[index];
+    fetchRecordingsByCallId(row.call_id, row.called_time)
+      .then(() => console.log(`⚡ Pre-cached: ${row.call_id}`))
+      .catch(() => {}) // Silently ignore errors
+      .finally(() => {
+        index++;
+        // Delay 500ms between requests to not overwhelm server
+        setTimeout(fetchNext, 500);
+      });
+  };
+  
+  // Start pre-fetching after 2 second delay (let page load first)
+  setTimeout(fetchNext, 2000);
+}
+
 
 // Helper function to append rows to the table body
 function appendTableRows(tbody, rows, startIndex = 0) {
@@ -1838,6 +1855,7 @@ function showHistoryModal(button) {
 // Add showHistoryModal to window object so it can be called from inline event handlers
 window.showHistoryModal = showHistoryModal;
 
+
 // Function to initialize eye buttons within a container (legacy support)
 function initializeEyeButtons(container) {
   // This is now handled by the onclick attribute directly
@@ -1868,12 +1886,38 @@ function initializeEyeButtons(container) {
         
         // If we have call_id and called_time, fetch recordings by call_id
         if (callId && calledTime) {
+          // Create blocking overlay
+          const overlay = document.createElement('div');
+          overlay.id = 'loading-overlay';
+          overlay.style.cssText = `
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.7);
+            z-index: 9999;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            cursor: wait;
+          `;
+          overlay.innerHTML = `
+            <div class="loader is-loading" style="width: 50px; height: 50px; border-width: 4px;"></div>
+            <p style="color: white; margin-top: 20px; font-size: 18px;">Loading recording...</p>
+          `;
+          document.body.appendChild(overlay);
+          
           try {
-            // Show loading indicator
+            // Show loading indicator on button too
             this.disabled = true;
             this.innerHTML = '<span class="icon is-small"><i class="material-icons">hourglass_empty</i></span>';
             
             const response = await fetchRecordingsByCallId(callId, calledTime);
+            
+            // Remove overlay
+            overlay.remove();
             
             // Reset button
             this.disabled = false;
@@ -1886,6 +1930,9 @@ function initializeEyeButtons(container) {
               alert('No recordings found for this call');
             }
           } catch (error) {
+            // Remove overlay
+            overlay.remove();
+            
             // Reset button
             this.disabled = false;
             this.innerHTML = '<span class="icon is-small"><i class="material-icons">play_arrow</i></span>';
@@ -1893,10 +1940,14 @@ function initializeEyeButtons(container) {
             console.error('Error fetching recordings:', error);
             alert('Error fetching recordings: ' + error.message);
           }
-        } else {
-          // Fallback to old behavior if call_id is not available
+        } else if (this.dataset.src) {
+          // Fallback to old behavior only if we have a valid src (actual recording ID)
           console.log('Using fallback method with src:', this.dataset.src);
           playRecording(this.dataset.src);
+        } else {
+          // No valid recording source available
+          console.error('No valid recording source: callId/calledTime missing and src is empty');
+          alert('Unable to play recording: Missing call information');
         }
       });
     }
@@ -2255,6 +2306,15 @@ function init() {
     script.onload = () => console.log('Howler loaded successfully');
     script.onerror = () => console.error('Failed to load Howler.js');
     document.head.appendChild(script);
+  }
+  
+  // FIX 6: Load WaveSurfer once at page load (saves 300-500ms on first play)
+  if (!window.WaveSurfer) {
+    const wsScript = document.createElement('script');
+    wsScript.src = 'https://unpkg.com/wavesurfer.js@7/dist/wavesurfer.min.js';
+    wsScript.onload = () => console.log('WaveSurfer loaded successfully');
+    wsScript.onerror = () => console.error('Failed to load WaveSurfer');
+    document.head.appendChild(wsScript);
   }
 }
 

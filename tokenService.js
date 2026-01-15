@@ -58,7 +58,11 @@ export async function getToken(tenant) {
 export async function getPortalToken(tenant) {
   const now = Date.now();
   const cached = cache.get(`portal:${tenant}`);
-  if (cached && now < cached.expiresAt - ms('2m')) return cached.access;
+  if (cached && now < cached.expiresAt - ms('2m')) {
+    console.log(`⚡ Token cache HIT for tenant: ${tenant}`);
+    return cached.access;
+  }
+  console.log(`🔄 Token cache MISS for tenant: ${tenant}, fetching new token...`);
 
   // Back-off loop across candidate endpoints / payloads
   const base = process.env.BASE_URL;
