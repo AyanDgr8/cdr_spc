@@ -480,7 +480,10 @@ function createRecordingLink(recordingUrl, callId, calledTime) {
   }
   
   button.dataset.src = cleanUrl;
-  button.dataset.meta = `${cleanUrl}/meta`;
+  // Fix: Insert /meta before query string, not after
+  button.dataset.meta = cleanUrl.includes('?') 
+    ? cleanUrl.replace('?', '/meta?') 
+    : `${cleanUrl}/meta`;
   
   return button;
 }
@@ -738,7 +741,11 @@ function playRecording(url, fileName) {
     const downloadBtn = document.getElementById('downloadBtn');
 
     // ✅ Fetch duration from backend (/meta) for long recordings
-    fetch(`${url}/meta`)
+    // Fix: Insert /meta before query string, not after
+    const metaUrl = url.includes('?') 
+      ? url.replace('?', '/meta?') 
+      : `${url}/meta`;
+    fetch(metaUrl)
       .then(r => r.json())
       .then(data => {
         if (typeof data.duration === 'number') {

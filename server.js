@@ -678,7 +678,7 @@ app.get('/api/recordings/by-call-id/:yearMonthCallId', async (req, res) => {
         'X-Account-ID': process.env.ACCOUNT_ID_HEADER ?? account,
         'Accept': 'application/json'
       },
-      timeout: 10000
+      timeout: 900000
     });
 
     console.log(`✅ Recordings fetched successfully for call_id: ${yearMonthCallId}`);
