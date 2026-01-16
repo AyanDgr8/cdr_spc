@@ -273,6 +273,7 @@ function createTableHeaders() {
     'Agent History',
     'Queue History',
     'Recording',
+    'All Recordings',
     'Call ID',
     'System Disposition',
   ];
@@ -430,7 +431,8 @@ function createTableRows(data) {
       row.transfer_type || '',
       processHistoryData(row.agent_history, 'agent'),
       processHistoryData(row.queue_history, 'queue'),
-      row.recording ? createRecordingLink(row.recording, row.call_id, row.called_time) : '',
+      row.recording ? createRecordingLink(row.recording) : '',
+      (row.call_id && row.called_time) ? createAllRecordingsButton(row.call_id, row.called_time) : '',
       row.call_id || '',
       row.system_disposition || row.disposition || '',
     ];
@@ -459,31 +461,37 @@ function createTableRows(data) {
   return tbody;
 }
 
-// Create recording link/button
-function createRecordingLink(recordingUrl, callId, calledTime) {
+// Create recording link/button - plays single recording directly (no API call)
+function createRecordingLink(recordingUrl) {
   if (!recordingUrl) return '';
   
   const button = document.createElement('button');
   button.className = 'button is-small is-info is-rounded play-btn';
   button.innerHTML = '<span class="icon is-small"><i class="material-icons">play_arrow</i></span>';
-  button.title = 'Play recording';
+  button.title = 'Play this recording';
   
-  // Store call_id and called_date for fetching recordings by call_id
-  button.dataset.callId = callId || '';
-  button.dataset.calledTime = calledTime || '';
-  
-  // Always construct direct recording URL - no need to fetch list
+  // Construct direct recording URL
   let cleanUrl = recordingUrl;
-  // If it's just an ID, assume it's a relative path to the API endpoint
   if (!recordingUrl.includes('/') && !recordingUrl.includes('http')) {
     cleanUrl = `/api/recordings/${recordingUrl}?account=default`;
   }
   
   button.dataset.src = cleanUrl;
-  // Fix: Insert /meta before query string, not after
-  button.dataset.meta = cleanUrl.includes('?') 
-    ? cleanUrl.replace('?', '/meta?') 
-    : `${cleanUrl}/meta`;
+  
+  return button;
+}
+
+// Create "All Recordings" button - fetches all recordings for this call via API
+function createAllRecordingsButton(callId, calledTime) {
+  if (!callId || !calledTime) return '';
+  
+  const button = document.createElement('button');
+  button.className = 'button is-small is-warning is-rounded all-recordings-btn';
+  button.innerHTML = '<span class="icon is-small"><i class="material-icons">library_music</i></span>';
+  button.title = 'View all recordings for this call';
+  
+  button.dataset.callId = callId;
+  button.dataset.calledTime = calledTime;
   
   return button;
 }
@@ -665,6 +673,7 @@ function showRecordingsModal(recordings) {
     });
   });
 }
+
 
 // Play recording in a modal with waveform 
 function playRecording(url, fileName) {
@@ -1148,7 +1157,6 @@ function prefetchRecordings(rows) {
   setTimeout(fetchNext, 2000);
 }
 
-
 // Helper function to append rows to the table body
 function appendTableRows(tbody, rows, startIndex = 0) {
   // Create a document fragment to batch DOM operations
@@ -1196,7 +1204,8 @@ function appendTableRows(tbody, rows, startIndex = 0) {
       { value: row.transfer_type || '', isHTML: false },  // Transfer type column
       { value: processHistoryData(row.agent_history, 'agent'), isHTML: true },  // HTML content with eye button
       { value: processHistoryData(row.record_type === 'Campaign' ? (row.lead_history || row.queue_history) : row.queue_history, 'queue'), isHTML: true },   // HTML content with eye button - use lead_history for campaigns
-      { value: row.recording ? createRecordingLink(row.recording, row.call_id, row.called_time) : '', isHTML: false, isElement: true },  // Recording button element
+      { value: row.recording ? createRecordingLink(row.recording) : '', isHTML: false, isElement: true },  // Recording button - plays single recording directly
+      { value: (row.call_id && row.called_time) ? createAllRecordingsButton(row.call_id, row.called_time) : '', isHTML: false, isElement: true },  // All Recordings button - fetches all via API
       { value: row.call_id || '', isHTML: false },
       { value: row.system_disposition || row.disposition || '', isHTML: false },  // System Disposition column
     ];
@@ -1871,9 +1880,26 @@ function initializeEyeButtons(container) {
     }
   });
   
-  // Initialize play buttons
+  // Initialize play buttons - plays single recording directly (instant)
   const playButtons = container.querySelectorAll('.play-btn');
   playButtons.forEach(btn => {
+    if (!btn.hasAttribute('data-initialized')) {
+      btn.setAttribute('data-initialized', 'true');
+      btn.addEventListener('click', function(e) {
+        e.preventDefault();
+        if (this.dataset.src) {
+          console.log('Playing single recording:', this.dataset.src);
+          playRecording(this.dataset.src);
+        } else {
+          alert('No recording available');
+        }
+      });
+    }
+  });
+
+  // Initialize "All Recordings" buttons - fetches all recordings via API
+  const allRecordingsButtons = container.querySelectorAll('.all-recordings-btn');
+  allRecordingsButtons.forEach(btn => {
     if (!btn.hasAttribute('data-initialized')) {
       btn.setAttribute('data-initialized', 'true');
       btn.addEventListener('click', async function(e) {
@@ -1882,72 +1908,57 @@ function initializeEyeButtons(container) {
         const callId = this.dataset.callId;
         const calledTime = this.dataset.calledTime;
         
-        console.log('Play button clicked, call_id:', callId, 'called_time:', calledTime);
+        if (!callId || !calledTime) {
+          alert('Missing call information');
+          return;
+        }
         
-        // If we have call_id and called_time, fetch recordings by call_id
-        if (callId && calledTime) {
-          // Create blocking overlay
-          const overlay = document.createElement('div');
-          overlay.id = 'loading-overlay';
-          overlay.style.cssText = `
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0, 0, 0, 0.7);
-            z-index: 9999;
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-            align-items: center;
-            cursor: wait;
-          `;
-          overlay.innerHTML = `
-            <div class="loader is-loading" style="width: 50px; height: 50px; border-width: 4px;"></div>
-            <p style="color: white; margin-top: 20px; font-size: 18px;">Loading recording...</p>
-          `;
-          document.body.appendChild(overlay);
+        console.log('Fetching all recordings for call_id:', callId);
+        
+        // Create blocking overlay
+        const overlay = document.createElement('div');
+        overlay.id = 'loading-overlay';
+        overlay.style.cssText = `
+          position: fixed;
+          top: 0;
+          left: 0;
+          width: 100%;
+          height: 100%;
+          background: rgba(0, 0, 0, 0.7);
+          z-index: 9999;
+          display: flex;
+          flex-direction: column;
+          justify-content: center;
+          align-items: center;
+          cursor: wait;
+        `;
+        overlay.innerHTML = `
+          <div class="loader is-loading" style="width: 50px; height: 50px; border-width: 4px;"></div>
+          <p style="color: white; margin-top: 20px; font-size: 18px;">Loading all recordings...</p>
+        `;
+        document.body.appendChild(overlay);
+        
+        try {
+          this.disabled = true;
+          this.innerHTML = '<span class="icon is-small"><i class="material-icons">hourglass_empty</i></span>';
           
-          try {
-            // Show loading indicator on button too
-            this.disabled = true;
-            this.innerHTML = '<span class="icon is-small"><i class="material-icons">hourglass_empty</i></span>';
-            
-            const response = await fetchRecordingsByCallId(callId, calledTime);
-            
-            // Remove overlay
-            overlay.remove();
-            
-            // Reset button
-            this.disabled = false;
-            this.innerHTML = '<span class="icon is-small"><i class="material-icons">play_arrow</i></span>';
-            
-            if (response && response.recordings && response.recordings.length > 0) {
-              // Show recordings modal with all recordings
-              showRecordingsModal(response.recordings);
-            } else {
-              alert('No recordings found for this call');
-            }
-          } catch (error) {
-            // Remove overlay
-            overlay.remove();
-            
-            // Reset button
-            this.disabled = false;
-            this.innerHTML = '<span class="icon is-small"><i class="material-icons">play_arrow</i></span>';
-            
-            console.error('Error fetching recordings:', error);
-            alert('Error fetching recordings: ' + error.message);
+          const response = await fetchRecordingsByCallId(callId, calledTime);
+          
+          overlay.remove();
+          this.disabled = false;
+          this.innerHTML = '<span class="icon is-small"><i class="material-icons">library_music</i></span>';
+          
+          if (response && response.recordings && response.recordings.length > 0) {
+            showRecordingsModal(response.recordings);
+          } else {
+            alert('No recordings found for this call');
           }
-        } else if (this.dataset.src) {
-          // Fallback to old behavior only if we have a valid src (actual recording ID)
-          console.log('Using fallback method with src:', this.dataset.src);
-          playRecording(this.dataset.src);
-        } else {
-          // No valid recording source available
-          console.error('No valid recording source: callId/calledTime missing and src is empty');
-          alert('Unable to play recording: Missing call information');
+        } catch (error) {
+          overlay.remove();
+          this.disabled = false;
+          this.innerHTML = '<span class="icon is-small"><i class="material-icons">library_music</i></span>';
+          console.error('Error fetching recordings:', error);
+          alert('Error fetching recordings: ' + error.message);
         }
       });
     }
