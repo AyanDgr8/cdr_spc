@@ -213,11 +213,15 @@ async function updateMissingDispositionFields() {
       // Find recent calls missing agent_disposition, follow_up_notes, or needing recording updates
       const idField = table.name === 'raw_campaigns' ? 'call_id' : 'callid';
       const missingFieldsQuery = `
-        SELECT ${idField} as callid, raw_data, created_at
+        SELECT ${idField} as callid, raw_data, created_at, 
+               COALESCE(disposition_retry_count, 0) as retry_count
         FROM ${table.name} 
         WHERE created_at >= DATE_SUB(NOW(), INTERVAL 2 HOUR)
         AND (
-          (JSON_EXTRACT(raw_data, '$.agent_disposition') IS NULL OR JSON_EXTRACT(raw_data, '$.agent_disposition') = '')
+          (
+            (JSON_EXTRACT(raw_data, '$.agent_disposition') IS NULL OR JSON_EXTRACT(raw_data, '$.agent_disposition') = '')
+            AND COALESCE(disposition_retry_count, 0) < 14
+          )
           OR (JSON_EXTRACT(raw_data, '$.follow_up_notes') IS NULL OR JSON_EXTRACT(raw_data, '$.follow_up_notes') = '')
           OR (JSON_EXTRACT(raw_data, '$.media_recording_id') IS NOT NULL OR JSON_EXTRACT(raw_data, '$.recording_filename') IS NOT NULL)
         )
@@ -254,14 +258,20 @@ async function updateMissingDispositionFields() {
         const hasRecording = (updatedCall.media_recording_id && updatedCall.media_recording_id !== '') || 
                             (updatedCall.recording_filename && updatedCall.recording_filename !== '');
         
+        const callId = updatedCall.call_id || updatedCall.callid;
+        
+        // Find the original record to get current retry count
+        const originalRecord = missingRecords.find(r => r.callid === callId);
+        const currentRetryCount = originalRecord ? originalRecord.retry_count : 0;
+        
         if (hasDisposition || hasFollowUpNotes || hasRecording) {
           try {
-            const callId = updatedCall.call_id || updatedCall.callid;
-            
-            // Update raw table
+            // Update raw table - reset retry counter if disposition is found
             const updateQuery = `
               UPDATE ${table.name} 
-              SET raw_data = ?, updated_at = NOW() 
+              SET raw_data = ?, 
+                  disposition_retry_count = 0,
+                  updated_at = NOW() 
               WHERE ${idField} = ?
             `;
             
@@ -292,9 +302,30 @@ async function updateMissingDispositionFields() {
             const followUpInfo = hasFollowUpNotes ? `follow_up_notes = "${updatedCall.follow_up_notes}"` : '';
             const recordingInfo = hasRecording ? `recording = "${updatedCall.media_recording_id || updatedCall.recording_filename}"` : '';
             const updateInfo = [dispositionInfo, followUpInfo, recordingInfo].filter(info => info).join(', ');
-            log(`  ✅ Updated ${callId}: ${updateInfo}`);
+            log(`  ✅ Updated ${callId}: ${updateInfo} (retry count reset to 0)`);
           } catch (updateError) {
             log(`  ❌ Failed to update ${updatedCall.call_id || updatedCall.callid}: ${updateError.message}`, 'error');
+          }
+        } else {
+          // Disposition still missing - increment retry counter
+          try {
+            const newRetryCount = currentRetryCount + 1;
+            const incrementQuery = `
+              UPDATE ${table.name} 
+              SET disposition_retry_count = ?,
+                  updated_at = NOW() 
+              WHERE ${idField} = ?
+            `;
+            
+            await dbService.query(incrementQuery, [newRetryCount, callId]);
+            
+            if (newRetryCount >= 14) {
+              log(`  ⚠️ ${callId}: Disposition still missing after ${newRetryCount} attempts - will stop retrying`);
+            } else {
+              log(`  🔄 ${callId}: Disposition still missing - retry count incremented to ${newRetryCount}/14`);
+            }
+          } catch (incrementError) {
+            log(`  ❌ Failed to increment retry counter for ${callId}: ${incrementError.message}`, 'error');
           }
         }
       }
@@ -357,33 +388,22 @@ async function updateFinalReportDispositions(callsToUpdate) {
       try {
         // Extract disposition and follow-up notes information
         const agentDisposition = call.agent_disposition || '';
-        
-        // Extract subdisposition data using the same logic as reportFetcher.js
-        const [subDisp1, subDisp2] = (() => {
-          let sd = call.agent_subdisposition ?? null;
-          if (Array.isArray(sd)) sd = sd[0];
-          if (!sd || typeof sd !== 'object') return ['', ''];
-          const first = sd.name ?? '';
-          
-          // Handle both old and new subdisposition formats
-          let second = '';
-          if (sd.subdisposition) {
-            const subDisp = sd.subdisposition;
-            
-            // New format: subdisposition has key-value pairs
-            if (subDisp.key && subDisp.value) {
-              second = `${subDisp.key} = ${subDisp.value}`;
-            }
-            // Old format: subdisposition has name
-            else if (subDisp.name) {
-              second = subDisp.name;
-            }
-          }
-          
-          return [first, second];
-        })();
-        
         const followUpNotes = call.follow_up_notes || '';
+        
+        // Extract nested subdispositions properly
+        let subDisp1 = '';
+        let subDisp2 = '';
+        
+        if (call.agent_subdisposition) {
+          if (typeof call.agent_subdisposition === 'object' && call.agent_subdisposition.name) {
+            subDisp1 = call.agent_subdisposition.name;
+            if (call.agent_subdisposition.subdisposition && call.agent_subdisposition.subdisposition.name) {
+              subDisp2 = call.agent_subdisposition.subdisposition.name;
+            }
+          } else if (typeof call.agent_subdisposition === 'string') {
+            subDisp1 = call.agent_subdisposition;
+          }
+        }
         
         // Build dynamic update query based on available fields
         const fieldsToUpdate = [];
@@ -610,7 +630,7 @@ async function populateDBWithTimeRange() {
       status: 'success',
       duration: `${duration}s`,
       recordsAdded: populateResult.standardPopulation?.recordCount || 0,
-      followUpNotesUpdated: populateResult.followUpNotesUpdated || 0,
+      followUpNotesCount: populateResult.followUpNotesCount || 0,
       dispositionUpdates: dispositionUpdates || 0,
       recordingUpdates: recordingUpdates || 0,
       nextRun: new Date(Date.now() + (config.intervalMinutes * 60 * 1000)).toISOString()

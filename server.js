@@ -77,27 +77,27 @@ app.use(express.static(path.join(__dirname, 'public')));
 const JWT_SECRET = process.env.JWT_SECRET || 'dev_secret_key';
 
 // Create MySQL connection pool
-// const pool = mysql.createPool({
-//   host:  'localhost',
-//   user: 'root',
-//   password: 'Ayan@1012',
-//   database: 'spc_main_cdr',
-//   port: 3306,
-//   waitForConnections: true,
-//   connectionLimit: 10,
-//   queueLimit: 0
-// });
-
 const pool = mysql.createPool({
-  host:"0.0.0.0",
-  user: 'multycomm',
-  password: 'WELcome@123',
+  host:  'localhost',
+  user: 'root',
+  password: 'Ayan@1012',
   database: 'spc_main_cdr',
   port: 3306,
   waitForConnections: true,
-  connectionLimit: 20,
+  connectionLimit: 10,
   queueLimit: 0
 });
+
+// const pool = mysql.createPool({
+//   host:"0.0.0.0",
+//   user: 'multycomm',
+//   password: 'WELcome@123',
+//   database: 'spc_main_cdr',
+//   port: 3306,
+//   waitForConnections: true,
+//   connectionLimit: 20,
+//   queueLimit: 0
+// });
 
 // Login
 app.post('/api/login', async (req, res) => {

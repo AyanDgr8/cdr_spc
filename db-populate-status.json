@@ -1,0 +1,18 @@
+{
+  "serviceStarted": "2026-01-21T12:51:12.359Z",
+  "status": "success",
+  "config": {
+    "intervalMinutes": 5,
+    "lookbackHours": 24
+  },
+  "lastUpdated": "2026-01-21T13:35:14.609Z",
+  "lastRun": "2026-01-21T13:35:14.608Z",
+  "duration": "22.56s",
+  "recordsAdded": 5125,
+  "followUpNotesUpdated": 0,
+  "dispositionUpdates": 72,
+  "recordingUpdates": 144,
+  "nextRun": "2026-01-21T13:40:14.609Z",
+  "reason": "SIGINT received",
+  "followUpNotesCount": 9547
+}
