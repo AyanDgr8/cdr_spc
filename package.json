@@ -5,9 +5,9 @@
   "type": "module",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "NODE_OPTIONS=--max_old_space_size=4096 concurrently \"npm:server\" \"npm:populate\"",
-    "server": "node server.js",
-    "populate": "node db-populate-service.js 5 1",
+    "start": "concurrently \"npm:server\" \"npm:populate\"",
+    "server": "node --max_old_space_size=4096 server.js",
+    "populate": "node --max_old_space_size=4096 db-populate-service.js 2 1",
     "access": "node -r dotenv/config accessToken.js",
     "reports": "node -r dotenv/config reportFetcher.js",
     "agents": "node -r dotenv/config agentStatus.js",

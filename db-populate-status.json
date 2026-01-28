@@ -1,18 +1,18 @@
 {
-  "serviceStarted": "2026-01-21T12:51:12.359Z",
+  "serviceStarted": "2026-01-25T10:47:48.948Z",
   "status": "success",
   "config": {
-    "intervalMinutes": 5,
-    "lookbackHours": 24
+    "intervalMinutes": 2,
+    "lookbackHours": 1
   },
-  "lastUpdated": "2026-01-21T13:35:14.609Z",
-  "lastRun": "2026-01-21T13:35:14.608Z",
-  "duration": "22.56s",
-  "recordsAdded": 5125,
+  "lastUpdated": "2026-01-25T11:57:07.690Z",
+  "lastRun": "2026-01-25T11:57:07.568Z",
+  "duration": "64.72s",
+  "recordsAdded": 123,
   "followUpNotesUpdated": 0,
-  "dispositionUpdates": 72,
-  "recordingUpdates": 144,
-  "nextRun": "2026-01-21T13:40:14.609Z",
+  "dispositionUpdates": 82,
+  "recordingUpdates": 164,
+  "nextRun": "2026-01-25T11:59:07.644Z",
   "reason": "SIGINT received",
-  "followUpNotesCount": 9547
+  "followUpNotesCount": 10632
 }

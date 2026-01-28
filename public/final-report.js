@@ -209,6 +209,80 @@ function getFormValues() {
   return formData;
 }
 
+
+
+async function loadQueueCampaignDropdown(fromTs, toTs) {
+  try {
+    const res = await fetch(
+      `/api/filters/queue-campaign?from_ts=${fromTs}&to_ts=${toTs}`
+    );
+    const data = await res.json();
+
+    if (!data.success) throw new Error(data.error);
+
+    const select = document.getElementById('queue_campaign_name');
+
+    // ðŸ”‘ Preserve current selection
+    const selectedValue = select.value;
+
+    // Reset dropdown
+    select.innerHTML = '<option value="">All</option>';
+
+    data.data.forEach(name => {
+      const opt = document.createElement('option');
+      opt.value = name;
+      opt.textContent = name;
+
+      // ðŸ”‘ Restore selected option
+      if (name === selectedValue) {
+        opt.selected = true;
+      }
+
+      select.appendChild(opt);
+    });
+
+  } catch (err) {
+    console.error('Failed to load queue/campaign dropdown:', err);
+  }
+}
+
+
+async function loadAgentDispositionDropdown(fromTs, toTs) {
+  try {
+    const res = await fetch(
+      `/api/filters/agent-disposition?from_ts=${fromTs}&to_ts=${toTs}`
+    );
+
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error);
+
+    const select = document.getElementById('agent_disposition');
+
+    // ðŸ”‘ Preserve currently selected value
+    const selectedValue = select.value;
+
+    // Reset dropdown
+    select.innerHTML = '<option value="">All</option>';
+
+    data.data.forEach(value => {
+      const opt = document.createElement('option');
+      opt.value = value;
+      opt.textContent = value;
+
+      // ðŸ”‘ Restore selection if it existed
+      if (value === selectedValue) {
+        opt.selected = true;
+      }
+
+      select.appendChild(opt);
+    });
+
+  } catch (err) {
+    console.error('Failed to load agent disposition dropdown:', err);
+  }
+}
+
+
 // Show error message
 function showError(message) {
   // Replace newlines with HTML line breaks for proper display
@@ -814,6 +888,15 @@ async function fetchData(params) {
     showError('Start and end dates are required');
     return;
   }
+
+  // Convert start/end to unix timestamps (seconds)
+  const fromTs = Math.floor(new Date(params.start).getTime() / 1000);
+  const toTs   = Math.floor(new Date(params.end).getTime() / 1000);
+
+  // Load Queue/Campaign dropdown dynamically
+  loadQueueCampaignDropdown(fromTs, toTs);
+  loadAgentDispositionDropdown(fromTs, toTs);
+
 
   try {
     // Reset state for new query
@@ -2292,6 +2375,46 @@ function addFilterChangeListeners() {
   });
 }
 
+// Add date change listeners to automatically fetch filter dropdowns
+function addDateChangeListeners() {
+  let debounceTimer;
+  
+  const fetchFiltersForDateRange = () => {
+    // Clear any existing debounce timer
+    if (debounceTimer) {
+      clearTimeout(debounceTimer);
+    }
+    
+    // Debounce to avoid excessive API calls while user is typing
+    debounceTimer = setTimeout(() => {
+      const startDate = elements.startInput.value;
+      const endDate = elements.endInput.value;
+      
+      // Only fetch if both dates are provided
+      if (startDate && endDate) {
+        // Convert to unix timestamps (seconds)
+        const fromTs = Math.floor(new Date(startDate).getTime() / 1000);
+        const toTs = Math.floor(new Date(endDate).getTime() / 1000);
+        
+        // Validate that dates are valid
+        if (!isNaN(fromTs) && !isNaN(toTs) && fromTs > 0 && toTs > 0) {
+          console.log('Date range changed, fetching filter dropdowns...');
+          loadQueueCampaignDropdown(fromTs, toTs);
+          loadAgentDispositionDropdown(fromTs, toTs);
+        }
+      }
+    }, 500); // Wait 500ms after user stops typing
+  };
+  
+  // Add event listeners to both date inputs
+  elements.startInput.addEventListener('change', fetchFiltersForDateRange);
+  elements.endInput.addEventListener('change', fetchFiltersForDateRange);
+  
+  // Also trigger on input event for more responsive updates
+  elements.startInput.addEventListener('input', fetchFiltersForDateRange);
+  elements.endInput.addEventListener('input', fetchFiltersForDateRange);
+}
+
 // Initialize the page
 function init() {
   // Set up date inputs
@@ -2303,6 +2426,21 @@ function init() {
   
   // Add filter change listeners
   addFilterChangeListeners();
+  
+  // Add date change listeners to automatically fetch filter dropdowns
+  addDateChangeListeners();
+  
+  // Fetch filter dropdowns for the default date range on page load
+  if (elements.startInput.value && elements.endInput.value) {
+    const fromTs = Math.floor(new Date(elements.startInput.value).getTime() / 1000);
+    const toTs = Math.floor(new Date(elements.endInput.value).getTime() / 1000);
+    
+    if (!isNaN(fromTs) && !isNaN(toTs) && fromTs > 0 && toTs > 0) {
+      console.log('Loading filter dropdowns for default date range...');
+      loadQueueCampaignDropdown(fromTs, toTs);
+      loadAgentDispositionDropdown(fromTs, toTs);
+    }
+  }
   
   // Apply filter-active class to any inputs that already have values
   updateFilterActiveClass();

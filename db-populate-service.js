@@ -14,7 +14,7 @@ import path from 'path';
 dotenv.config();
 
 // Default configuration
-const DEFAULT_INTERVAL_MINUTES = 5;
+const DEFAULT_INTERVAL_MINUTES = 2;
 const DEFAULT_LOOKBACK_HOURS = 24;
 const LOG_FILE = path.join(process.cwd(), 'db-populate-service.log');
 const STATUS_FILE = path.join(process.cwd(), 'db-populate-status.json');
@@ -210,23 +210,26 @@ async function updateMissingDispositionFields() {
     try {
       log(`Processing ${table.type} calls for disposition and follow-up notes updates...`);
       
-      // Find recent calls missing agent_disposition, follow_up_notes, or needing recording updates
+      // Find recent calls missing agent_disposition, follow_up_notes, or recording info
       const idField = table.name === 'raw_campaigns' ? 'call_id' : 'callid';
       const missingFieldsQuery = `
         SELECT ${idField} as callid, raw_data, created_at, 
                COALESCE(disposition_retry_count, 0) as retry_count
         FROM ${table.name} 
-        WHERE created_at >= DATE_SUB(NOW(), INTERVAL 2 HOUR)
+        WHERE created_at >= DATE_SUB(NOW(), INTERVAL 3 HOUR)
         AND (
           (
             (JSON_EXTRACT(raw_data, '$.agent_disposition') IS NULL OR JSON_EXTRACT(raw_data, '$.agent_disposition') = '')
             AND COALESCE(disposition_retry_count, 0) < 14
           )
           OR (JSON_EXTRACT(raw_data, '$.follow_up_notes') IS NULL OR JSON_EXTRACT(raw_data, '$.follow_up_notes') = '')
-          OR (JSON_EXTRACT(raw_data, '$.media_recording_id') IS NOT NULL OR JSON_EXTRACT(raw_data, '$.recording_filename') IS NOT NULL)
+          OR (
+            (JSON_EXTRACT(raw_data, '$.media_recording_id') IS NULL OR JSON_EXTRACT(raw_data, '$.media_recording_id') = '')
+            AND (JSON_EXTRACT(raw_data, '$.recording_filename') IS NULL OR JSON_EXTRACT(raw_data, '$.recording_filename') = '')
+          )
         )
         ORDER BY created_at DESC 
-        LIMIT 50
+        LIMIT 100
       `;
       
       const missingRecords = await dbService.query(missingFieldsQuery);
@@ -390,15 +393,26 @@ async function updateFinalReportDispositions(callsToUpdate) {
         const agentDisposition = call.agent_disposition || '';
         const followUpNotes = call.follow_up_notes || '';
         
-        // Extract nested subdispositions properly
+        // Extract nested subdispositions properly - handle both old and new formats
         let subDisp1 = '';
         let subDisp2 = '';
         
         if (call.agent_subdisposition) {
           if (typeof call.agent_subdisposition === 'object' && call.agent_subdisposition.name) {
             subDisp1 = call.agent_subdisposition.name;
-            if (call.agent_subdisposition.subdisposition && call.agent_subdisposition.subdisposition.name) {
-              subDisp2 = call.agent_subdisposition.subdisposition.name;
+            
+            // Handle subdisposition field
+            if (call.agent_subdisposition.subdisposition) {
+              const subDisp = call.agent_subdisposition.subdisposition;
+              
+              // New format: subdisposition has key-value pairs
+              if (subDisp.key && subDisp.value) {
+                subDisp2 = `${subDisp.key} = ${subDisp.value}`;
+              }
+              // Old format: subdisposition has name
+              else if (subDisp.name) {
+                subDisp2 = subDisp.name;
+              }
             }
           } else if (typeof call.agent_subdisposition === 'string') {
             subDisp1 = call.agent_subdisposition;
@@ -661,7 +675,14 @@ function updateStatusFile(status) {
     // Read existing status if available
     let currentStatus = {};
     if (fs.existsSync(statusFile)) {
-      currentStatus = JSON.parse(fs.readFileSync(statusFile, 'utf8'));
+      try {
+        const fileContent = fs.readFileSync(statusFile, 'utf8');
+        currentStatus = JSON.parse(fileContent);
+      } catch (parseError) {
+        // If JSON is corrupted, log warning and start fresh
+        log(`Status file corrupted, recreating: ${parseError.message}`, 'warning');
+        currentStatus = {};
+      }
     }
     
     // Update with new status
@@ -671,8 +692,10 @@ function updateStatusFile(status) {
       lastUpdated: new Date().toISOString()
     };
     
-    // Write updated status
-    fs.writeFileSync(statusFile, JSON.stringify(updatedStatus, null, 2));
+    // Write updated status atomically by writing to temp file first
+    const tempFile = statusFile + '.tmp';
+    fs.writeFileSync(tempFile, JSON.stringify(updatedStatus, null, 2));
+    fs.renameSync(tempFile, statusFile);
   } catch (error) {
     log(`Error updating status file: ${error.message}`, 'error');
   }

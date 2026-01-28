@@ -77,27 +77,27 @@ app.use(express.static(path.join(__dirname, 'public')));
 const JWT_SECRET = process.env.JWT_SECRET || 'dev_secret_key';
 
 // Create MySQL connection pool
-const pool = mysql.createPool({
-  host:  'localhost',
-  user: 'root',
-  password: 'Ayan@1012',
-  database: 'spc_main_cdr',
-  port: 3306,
-  waitForConnections: true,
-  connectionLimit: 10,
-  queueLimit: 0
-});
-
 // const pool = mysql.createPool({
-//   host:"0.0.0.0",
-//   user: 'multycomm',
-//   password: 'WELcome@123',
+//   host:  'localhost',
+//   user: 'root',
+//   password: 'Ayan@1012',
 //   database: 'spc_main_cdr',
 //   port: 3306,
 //   waitForConnections: true,
-//   connectionLimit: 20,
+//   connectionLimit: 10,
 //   queueLimit: 0
 // });
+
+const pool = mysql.createPool({
+  host:"0.0.0.0",
+  user: 'multycomm',
+  password: 'WELcome@123',
+  database: 'spc_main_cdr',
+  port: 3306,
+  waitForConnections: true,
+  connectionLimit: 20,
+  queueLimit: 0
+});
 
 // Login
 app.post('/api/login', async (req, res) => {
@@ -1171,6 +1171,77 @@ app.post('/api/reports/progressive/init', async (req, res) => {
     });
   }
 });
+
+app.get('/api/filters/queue-campaign', async (req, res) => {
+  try {
+    const { from_ts, to_ts } = req.query;
+
+    if (!from_ts || !to_ts) {
+      return res.status(400).json({
+        success: false,
+        error: 'from_ts and to_ts are required'
+      });
+    }
+
+    const sql = `
+      SELECT DISTINCT queue_campaign_name
+      FROM final_report
+      WHERE called_time BETWEEN ? AND ?
+      ORDER BY queue_campaign_name
+    `;
+
+    const rows = await dbService.query(sql, [from_ts, to_ts]);
+
+    res.json({
+      success: true,
+      data: rows.map(r => r.queue_campaign_name)
+    });
+
+  } catch (err) {
+    console.error('Queue/Campaign filter error:', err);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch queue/campaign list'
+    });
+  }
+});
+
+
+app.get('/api/filters/agent-disposition', async (req, res) => {
+  try {
+    const { from_ts, to_ts } = req.query;
+
+    if (!from_ts || !to_ts) {
+      return res.status(400).json({
+        success: false,
+        error: 'from_ts and to_ts are required'
+      });
+    }
+
+    const sql = `
+      SELECT DISTINCT agent_disposition
+      FROM final_report
+      WHERE called_time BETWEEN ? AND ?
+        AND agent_disposition <> ''
+      ORDER BY agent_disposition
+    `;
+
+    const rows = await dbService.query(sql, [from_ts, to_ts]);
+
+    res.json({
+      success: true,
+      data: rows.map(r => r.agent_disposition)
+    });
+
+  } catch (err) {
+    console.error('Agent disposition dropdown error:', err);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch agent disposition list'
+    });
+  }
+});
+
 
 app.get('/api/reports/search', async (req, res) => {
   const requestId = Math.random().toString(36).substring(2, 10);
